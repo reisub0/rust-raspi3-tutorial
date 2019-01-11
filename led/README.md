@@ -1,121 +1,27 @@
-# Tutorial 07 - Abstraction
+# Tutorial ?? - LED
 
-This is a short one regarding code changes, but has lots of text because two
-important Rust principles are introduced: Abstraction and modularity.
+Rust is an amazing systems-level programming language that has _safety_ as one of its top design goals, along with _concurrency_ and _performance_. It is systems-level, meaning you can call assembly code within it, or work with raw memory contents. Rust feels and writes like a high level language, but it has all the powers of a lower level one like C. However, anything that has the potential to blow up in your face, like dereferencing a pointer that could be NULL, has to be wrapped up in `unsafe` code block, meaning you're telling the compiler that you know what you're doing. Note that this does **not** turn off the borrow checker.
 
-From a functional perspective, this tutorial is the same as `05_uart0`, but with
-the key difference that we threw out all manually crafted assembler. Both the
-main and the boot crate do not use `#![feature(global_asm)]` or
-`#![feature(asm)]` anymore. Instead, we pulled in the [cortex-a][crate] crate,
-which now provides `cortex-a` specific features like register access or safe
-wrappers around assembly instructions.
+Rust is heavily influenced by the likes of pure functional languages like Haskell while being pragmatic enough to not include a GC which would make it impractical for systems-level work. It borrows from the best aspects of these languages to create what is, in my opinion, the best language for low level work. The upfront cost and time investment for carefully defining your types and what data you're going to be working with might seem like too much of a price to pay compared to the 'Wild West' attitude of C. But the compiler really has got your back and you can be reasonably certain your code isn't going to blow up at runtime once it has passed the rigorous standards of the compiler. This does mean you will be fighting with the compiler a bit to get your code past it but it is worth it.
 
-[crate]: https://github.com/andre-richter/cortex-a
+Especially when you're talking about bare metal programming where there's no debugging other than print statements (if you're lucky), it's almost impossible to know if the program you're writing in C is going to do what it's expected to do. Rust forces you to think about your code and your types and think about your error cases a bit more carefully. Once you've made it past the borrow checker and your code successfully compiles in Rust, you've also made it past so many pitfalls that the same code in C would have fallen into at runtime.
 
-For single assembler instructions, we now have the `cortex-a::asm` namespace,
-e.g. providing `asm::nop()`.
+Rust is also strongly typed compared to weakly typed C. This means there's no unseen conversions to and from types. This means that another class of common errors from C are eliminated.
 
-For registers, there is `cortex-a::regs`. The interface is the same as we have
-it for MMIO accesses, aka provided by [register-rs][register-rs] and therefore
-based on [tock-regs][tock-regs]. For registers like the stack pointer, which are
-generally read and written as a whole, there's the common [get()][get] and
-[set()][set] functions which take and return primitive integer types.
+Enough ranting about programming languages, let's try to make something useful in Rust.
 
-[register-rs]: https://github.com/rust-osdev/register-rs
-[tock-regs]: https://github.com/tock/tock/tree/master/libraries/tock-register-interface
-[get]: https://docs.rs/cortex-a/1.0.0/cortex_a/regs/sp/trait.RegisterReadWrite.html#tymethod.get
-[set]: https://docs.rs/cortex-a/1.0.0/cortex_a/regs/sp/trait.RegisterReadWrite.html#tymethod.set
+Here's what we're going to do: The Raspberry Pi 3 has an on-board Green LED that's usually mapped to SD Card activity by the operating system. Since we are going to implement the kernel, we're instead going to blink the so called `ACT` LED at regular intervals. And we're going to do this all from pure Rust.
 
-Registers that are divided into multiple fields, like `CNTP_CTL_EL0`, on the
-other hand, are backed by a respective [type][cntp_type] definition that allow
-for fine-grained reading and modifications.
+To achieve this, you need a working knowledge of writing to memory mapped registers. Instead of mucking about with bitwise operators and shifts, we're going to rely on Rust's amazing macro and type support, and use the `register` crate to define the layout of our registers in memory. This enables us to write For similar code on how to define register contents, look around the excellent [rust-raspi3-tutorial](https://github.com/rust-embedded/rust-raspi3-tutorial) repository.
 
-[cntp_type]: https://docs.rs/cortex-a/1.0.0/cortex_a/regs/cntp_ctl_el0/CNTP_CTL_EL0/index.html
+You will likely need to be _ARMed_ with the [BCM2837 ARM Peripherals Manual](https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf). The link is for the BCM2835. There is no difference between the two, except for a different base address. You'll be interested in Chapter 6: GPIO. Look around for what registers you need to modify to achieve what you want.
 
-The register API is based on the [tock project's][tock] register
-interface. Please see [their homepage][tock_registers] for all the details.
+Some caveats to remember:
 
-[tock]: https://github.com/tock/tock
-[tock_registers]: https://github.com/tock/tock/tree/master/libraries/tock-register-interface
+The base address is 0x3F00_0000 as opposed to the 0x7E00_0000 on the manual.
 
-To some extent, this namespacing also makes our code more portable. For example,
-if we want to reuse parts of it on another processor architecture, we could pull
-in the respective crate and change our use-clause from `use cortex-a::asm` to
-`use new_architecture::asm`. Of course this also demands that both crates adhere
-to a common set of wrappers that provide the same functionality. Assembler and
-register instructions like we use them here are actually a weak example. Where
-this modular approach can really pay off is for common peripherals like timers
-or memory management units, where implementations differ between processors, but
-usage is often the same (e.g. setting a timer for x amount of microseconds).
+GPIO 29 is mapped to the ACT LED on the RPI 3B+.
 
-In Rust, we have the [Embedded Devices Working
-Group](https://github.com/rust-lang-nursery/embedded-wg), which among other
-goals, tries to establish a common set of wrapper- and interface-crates that
-introduce abstraction on different levels of the system. Check out the [Awesome
-Embedded Rust](https://github.com/rust-embedded/awesome-embedded-rust) list for
-an overview.
+If you're stuck at any point, you may look at my code for the same.
 
-## Boot Code
-
-Like mentioned above, we threw out the `boot_cores.S` assembler file and
-replaced it with a Rust function. Why? Because we can, for the fun of it.
-
-```rust
-#[link_section = ".text.boot"]
-#[no_mangle]
-pub unsafe extern "C" fn _boot_cores() -> ! {
-    use cortex_a::{asm, regs::mpidr_el1::*, regs::sp::*};
-
-    const CORE_MASK: u64 = 0x3;
-    const STACK_START: u64 = 0x80_000;
-
-    match MPIDR_EL1.get() & CORE_MASK {
-        0 => {
-            SP.set(STACK_START);
-            reset()
-        }
-        _ => loop {
-            // if not core0, infinitely wait for events
-            asm::wfe();
-        },
-    }
-}
-```
-
-Since this is the first code that the RPi3 will execute, the stack has not been
-set up yet. Actually it is this function that will do it for the first
-time. Therefore, it is important to check that code generated from this function
-does not call any subroutines that need a working stack themselves.
-
-The `get()` and `asm` wrappers that we use from the `cortex-a` crate are all
-inlined, so we fulfill this requirement. The compilation result of this function
-should yield something like the following, where you can see that the stack
-pointer is not used apart from ourselves setting it.
-
-```console
-ferris@box:~$ cargo objdump --target aarch64-raspi3-none-elf.json -- -disassemble -print-imm-hex kernel8
-
-[...] (Some output omitted)
-
-_boot_cores:
-   80000:	a8 00 38 d5 	mrs	x8, MPIDR_EL1
-   80004:	1f 05 40 f2 	tst	x8, #0x3
-   80008:	60 00 00 54 	b.eq	#0xc <_boot_cores+0x14>
-   8000c:	5f 20 03 d5 	wfe
-   80010:	ff ff ff 17 	b	#-0x4 <_boot_cores+0xc>
-   80014:	e8 03 09 32 	orr	w8, wzr, #0x800000
-   80018:	1f 01 00 91 	mov	sp, x8
-   8001c:	35 02 00 94 	bl	#0x8d4 <raspi3_boot::reset::h90bc56752de44d1b>
-```
-
-It is important to always manually check this, and not blindly rely on the
-compiler.
-
-## Test it
-
-Since this is the first tutorial after we've written our own bootloader over
-serial, you can now for the first time test this convenient interface:
-
-```sh
-make raspboot
-```
+Good luck.
