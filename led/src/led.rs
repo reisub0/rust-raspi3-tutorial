@@ -23,35 +23,22 @@
  */
 
 use super::gpio::*;
-use super::uarthandle;
-use core::sync::atomic::{compiler_fence, Ordering};
-use cortex_a::asm;
 
-pub struct Led;
+pub struct Led {
+    gpio: Gpio,
+}
 
 impl Led {
     pub fn new() -> Self {
-        Self
+        Self { gpio: Gpio }
     }
     pub fn init(&self) {
-        unsafe {
-            (*GPFSEL1).modify(GPFSEL1::FSEL16::Output);
-            (*GPFSEL4).modify(GPFSEL4::FSEL47::Output);
-            (*GPFSEL2).modify(GPFSEL2::FSEL29::Output);
-        }
+        self.gpio.GPFSEL2.modify(GPFSEL2::FSEL29::Output);
     }
     pub fn on(&self) {
-        unsafe {
-            (*GPSET0).write(GPSET0::O16::Set);
-            (*GPSET0).write(GPSET0::O29::Set);
-            (*GPSET1).write(GPSET1::O47::Set);
-        }
+        self.gpio.GPSET0.write(GPSET0::O29::Set);
     }
     pub fn off(&self) {
-        unsafe {
-            (*GPCLR0).write(GPCLR0::O16::Clear);
-            (*GPCLR0).write(GPCLR0::O29::Clear);
-            (*GPCLR1).write(GPCLR1::O47::Clear);
-        }
+        self.gpio.GPCLR0.write(GPCLR0::O29::Clear);
     }
 }

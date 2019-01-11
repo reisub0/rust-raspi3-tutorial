@@ -34,48 +34,22 @@ extern crate raspi3_boot;
 extern crate register;
 
 #[no_std]
-#[macro_use]
 
 const MMIO_BASE: u32 = 0x3F00_0000;
 
 mod delays;
 mod gpio;
 mod led;
-mod mbox;
-mod uart;
-
-use core::sync::atomic::{compiler_fence, Ordering};
 
 entry!(kernel_entry);
-static mut uarthandle: uart::Uart = uart::Uart {};
 
 fn kernel_entry() -> ! {
-    unsafe {
-        uarthandle = uart::Uart::new();
-        let mut mbox = mbox::Mbox::new();
-
-        // set up serial console
-        if uarthandle.init(&mut mbox).is_err() {
-            loop {
-                cortex_a::asm::wfe()
-            } // If UART fails, abort early
-        }
-
-        uarthandle.puts("Pre new led\n");
-        let led = led::Led::new();
-        uarthandle.puts("Pre led init\n");
-        led.init();
-        uarthandle.puts("Post led init\n");
-        loop {
-            led.on();
-            delays::wait_msec(500_000);
-            // for _ in 0..1500000 {}
-            led.off();
-            delays::wait_msec(500_000);
-            // for _ in 0..1500000 {}
-        }
-        loop {
-            uarthandle.send(uarthandle.getc());
-        }
+    let led = led::Led::new();
+    led.init();
+    loop {
+        led.on();
+        delays::wait_msec(500_000);
+        led.off();
+        delays::wait_msec(500_000);
     }
 }
